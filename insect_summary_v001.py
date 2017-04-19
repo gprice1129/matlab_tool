@@ -1,4 +1,5 @@
 import os
+import re
 import soundfile as sf
 import scipy.io
 import scipy.signal
@@ -7,6 +8,7 @@ import numpy.fft
 from Tkinter import Tk
 from tkFileDialog import askdirectory, askopenfilename
 import calendar
+import datetime as dt
 
 MONTHS = dict((v, k) for k, v in enumerate(calendar.month_abbr))
 
@@ -17,13 +19,64 @@ maxWingBeat = 1800
 slidingWindow = 1024
 stepSize = 128
 
-#Get the directory containing audio files 
-Tk().withdraw() # Disable a full GUI
-directory = askdirectory()
-processInBatch_1_1(directory, slidingWindow, stepSize, minWingBeat, maxWingBeat)
-
+def main():
+    #Get the directory containing audio files 
+    Tk().withdraw() # Disable a full GUI
+    directory = askdirectory()
+    #TODO: 
+    #       Calculate earliest and latest date [DONE]
+    #       Generate timestamps 
+    #       Get difference in dates [DONE]
+    #       Try to load existing FFT data and check that there is no new data
+    #       Otherwise generate FFT file
+    #       Seperate into "Good" and "Bad" data
+    #       Compute WBF of "Good" data
+    lowerDate = dt.datetime(dt.MINYEAR, 1, 1, 0, 0, 0)
+    upperDate = dt.datetime(dt.MAXYEAR, 12, 31, 23, 59, 59)
+    earlyDate, lateDate = getDateRange(directory, lowerDate, upperDate)
+    deltaDate = lateDate - earlyDate
+    deltaHours, deltaSeconds = divmod(deltaDate.total_seconds(), 3600)
+    deltaMinutes, deltaSeconds = divmod(seconds, 60)
+    #processInBatch_1_1(directory, slidingWindow, stepSize, minWingBeat, maxWingBeat)
 
 # Supporting function definitions
+
+###############################################################################
+# Gets the earlist and latest date of files at a given path assuming the
+# following format for the filenames: 
+#               [year][month][day]-[hour]_[minute]_[second]
+#
+# Parameters
+# path: The path to the directory to search for files
+# lowerDate: The lower bound on the date the function will consider
+# upperDate: The upper bound on the date the function will consider
+
+def getDateRange(path, lowerDate, upperDate):
+    files = getFileNames(path, '.wav')
+    dates = list(map(lambda x: fileToDate(x), files))
+    dates = list(filter(lambda x: x > lowerDate and x < upperDate, dates))
+    #TODO: Filter the files here based on the dates
+    dates.sort()
+    return (dates[0], dates[len(dates) - 1])
+
+###############################################################################
+
+###############################################################################
+# Converts a filename in the format:
+#               [year][month][day]-[hour]_[minute]_[second]
+# to a datetime object.
+#
+# Parameters
+# filename: The filename to convert to a datetime object
+
+def fileToDate(filename):
+    year, month, day, hr, minute, sec = re.findall('\d+|[A-Z][a-z]+', filename);
+    month = MONTHS[month] #TODO: This is really unsafe, should do error checking
+    year, day, hr, minute, sec = list(map(lambda x: int(x),
+                                          [year, day, hr, minute, sec])) 
+    return dt.datetime(year, month, day, hr, minute, sec)
+
+##############################################################################
 
 ###############################################################################
 # Gets all filenames with a given extension and returns them in a list
@@ -244,4 +297,4 @@ def computeWBF(path, allFFT, sampleRate):
 
 ###############################################################################
 
-
+main()
