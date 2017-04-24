@@ -27,18 +27,48 @@ def main():
     #       Calculate earliest and latest date [DONE]
     #       Generate timestamps 
     #       Get difference in dates [DONE]
-    #       Try to load existing FFT data and check that there is no new data
+    #       Try to load existing FFT data and check that there is no new data [DONE]
     #       Otherwise generate FFT file
     #       Seperate into "Good" and "Bad" data
     #       Compute WBF of "Good" data
+
+    # Calculate earliest and latest date
     lowerDate = dt.datetime(dt.MINYEAR, 1, 1, 0, 0, 0)
     upperDate = dt.datetime(dt.MAXYEAR, 12, 31, 23, 59, 59)
     earlyDate, lateDate = getDateRange(directory, lowerDate, upperDate)
+    # Get difference in dates
     deltaDate = lateDate - earlyDate
     deltaHours, deltaSeconds = divmod(deltaDate.total_seconds(), 3600)
-    deltaMinutes, deltaSeconds = divmod(seconds, 60)
-    #processInBatch_1_1(directory, slidingWindow, stepSize, minWingBeat, maxWingBeat)
+    deltaMinutes, deltaSeconds = divmod(deltaSeconds, 60)
 
+    # Try to load existing FFT data and check that there is no new data
+    recalculate = False
+    try:
+        allFFTData = scipy.io.loadmat(directory + "/FFT.mat")
+        allFFT = allFFTData["FFT"]
+        files = getFileNames(directory, ".wav")
+        if len(allFFT) == len(files):
+            print("Checking FFT files... good")
+            print("Attempting load on all_start_index.mat 
+                   and all_end_index.mat")
+            allStartIndexData = scipy.io.loadmat(directory + 
+                                                 "/all_start_index.mat")
+            allEndIndexData = scipy.io.loadmat(directory +
+                                               "/all_end_index.mat")
+            allStartIndex = allStartIndexData["Start"]
+            allEndIndex = allEndIndexData["End"] 
+        else: recalculate = True
+    except IOError:
+       recalculate = True 
+    finally:
+        if recalculate:
+            # Otherwise generate FFT file
+            allFFT, allStartIndex, allEndIndex = processInBatch_1_1(directory,
+                                                                    slidingWindow,
+                                                                    stepSize,
+                                                                    minWingBeat,
+                                                                    maxWingBeat)
+    
 # Supporting function definitions
 
 ###############################################################################
@@ -162,7 +192,7 @@ def processInBatch_1_1(path, slidingWindow, stepSize, minWingBeat, maxWingBeat):
     scipy.io.savemat(path + "/FFT", {"FFT": allFFT})
     scipy.io.savemat(path + "/all_start_index", {"Start": allStartIndex})
     scipy.io.savemat(path + "/all_end_index", {"End": allEndIndex}) 
-    return
+    return allFFT, allStartIndex, allEndIndex
 
 ###############################################################################
 
