@@ -1,5 +1,7 @@
 import os
 import re
+from math import ceil
+import shutil
 import soundfile as sf
 import scipy.io
 import scipy.signal
@@ -11,6 +13,11 @@ import calendar
 import datetime as dt
 
 MONTHS = dict((v, k) for k, v in enumerate(calendar.month_abbr))
+FFT_ID = "all_fft"
+START_ID = "all_start_index"
+END_ID = "all_end_index"
+WBF_ID = "all_WBF"
+STAMP_FORMAT = "%m/%d/%Y at %I:%M:%S %p"
 
 #Parameters
 
@@ -18,11 +25,14 @@ minWingBeat = 400
 maxWingBeat = 1800
 slidingWindow = 1024
 stepSize = 128
+complexityThreshold = 0.00007
+interval = 5
 
 def main():
     #Get the directory containing audio files 
     Tk().withdraw() # Disable a full GUI
     directory = askdirectory()
+    getOSDelim()
     #TODO: 
     #       Calculate earliest and latest date [DONE]
     #       Generate timestamps 
@@ -36,6 +46,11 @@ def main():
     lowerDate = dt.datetime(dt.MINYEAR, 1, 1, 0, 0, 0)
     upperDate = dt.datetime(dt.MAXYEAR, 12, 31, 23, 59, 59)
     earlyDate, lateDate = getDateRange(directory, lowerDate, upperDate)
+    earlyTimeStamp = earlyDate.strftime(STAMP_FORMAT)
+    lateTimeStamp = lateDate.strftime(STAMP_FORMAT)
+    # Generate timestamps
+    
+     
     # Get difference in dates
     deltaDate = lateDate - earlyDate
     deltaHours, deltaSeconds = divmod(deltaDate.total_seconds(), 3600)
@@ -43,20 +58,19 @@ def main():
 
     # Try to load existing FFT data and check that there is no new data
     recalculate = False
+    files = getFileNames(directory, ".wav")
     try:
-        allFFTData = scipy.io.loadmat(directory + "/FFT.mat")
-        allFFT = allFFTData["FFT"]
-        files = getFileNames(directory, ".wav")
+        allFFTData = scipy.io.loadmat(directory + DELIM + FFT_ID + ".mat")
+        allFFT = allFFTData[FFT_ID]
         if len(allFFT) == len(files):
             print("Checking FFT files... good")
-            print("Attempting load on all_start_index.mat 
-                   and all_end_index.mat")
-            allStartIndexData = scipy.io.loadmat(directory + 
-                                                 "/all_start_index.mat")
-            allEndIndexData = scipy.io.loadmat(directory +
-                                               "/all_end_index.mat")
-            allStartIndex = allStartIndexData["Start"]
-            allEndIndex = allEndIndexData["End"] 
+            print("Attempting load on all_start_index.mat and all_end_index.mat")
+            allStartIndexData = scipy.io.loadmat(directory + DELIM + 
+                                                 START_ID + ".mat")
+            allEndIndexData = scipy.io.loadmat(directory + DELIM +
+                                               END_ID + ".mat")
+            allStartIndex = allStartIndexData[START_ID][0]
+            allEndIndex = allEndIndexData[END_ID][0] 
         else: recalculate = True
     except IOError:
        recalculate = True 
@@ -69,17 +83,126 @@ def main():
                                                                     minWingBeat,
                                                                     maxWingBeat)
     
+    sampleRate = sf.read(directory + DELIM + files[0])[1]
+    score = computeComplexityScore(allFFT)
+    indexOfGood = []
+    indexOfBad = []
+    goodPath = directory + DELIM + "good"
+    badPath = directory + DELIM + "bad"
+    if os.path.isdir(goodPath):
+        shutil.rmtree(goodPath)
+    if os.path.isdir(badPath):
+        shutil.rmtree(badPath)
+    createDirectory(directory, "good")
+    createDirectory(directory, "bad")
+    
+    allFFTGood = []
+    allStartIndexGood = []
+    allEndIndexGood = []
+    allFFTBad = []
+    allStartIndexBad = []
+    allEndIndexBad = []
+    indexOfGood = []
+    indexOfBad = []
+    
+    for i in range(len(score)):
+        if score[i] >= complexityThreshold:
+            indexOfGood.append(i)
+            shutil.copy(directory + DELIM + files[i], goodPath)
+            allFFTGood.append(allFFT[i])
+            allStartIndexGood.append(allStartIndex[i])
+            allEndIndexGood.append(allEndIndex[i])
+        else:
+            indexOfBad.append(i)
+            shutil.copy(directory + DELIM + files[i], badPath)
+            allFFTBad.append(allFFT[i])
+            allStartIndexBad.append(allStartIndex[i])
+            allEndIndexBad.append(allEndIndex[i])
+
+    allFFTGood, allStartIndexGood, allEndIndexGood = convertToArray(
+        list([allFFTGood, allStartIndexGood, allEndIndexGood])) 
+    saveFFT(goodPath, allFFTGood, allStartIndexGood, allEndIndexGood)
+
+    allFFTBad, allStartIndexBad, allEndIndexBad = convertToArray(
+        list([allFFTBad, allStartIndexBad, allEndIndexBad]))
+    saveFFT(badPath, allFFTBad, allStartIndexBad, allEndIndexBad)
+
+    allWBF = computeWBF(goodPath, allFFTGood, sampleRate)
+    minWBF = np.amin(allWBF)
+    maxWBF = np.amax(allWBF)
+    meanWBF = np.mean(allWBF)
+    stdWBF = np.std(allWBF)
+
+    numFilesAccepted = len(allStartIndexGood)
+    numFilesRejected = len(allStartIndexBad)
+    numBins = ceil(numFilesAccepted/10.0)
+    
+    
+    print("You are investigating a folder named '" + 
+          directory.split(DELIM)[-1] + "'.")
+    print("There are " + str(len(files)) + " wav files.")
+    print("They are sampled at " + str(sampleRate) + " Hz.") 
+    print("The earliest time stamp is " + earlyTimeStamp +
+          ", the latest is " + lateTimeStamp + ".")
+    print("This indicates a time span of " + str(int(deltaHours)) + 
+          " hours, " + str(int(deltaMinutes)) + " minutes and " + 
+          str(int(deltaSeconds)) + " seconds.")
+    print(str(numFilesRejected) + " files have been rejected at noise.")
+    print(str(numFilesAccepted) + " files have been accepted as containing " +
+          "least one insect encounter.")
+    print("Considering only the " + str(numFilesAccepted) + " good files, we" +
+          " observe the following statistics for the WBF.")
+    print("Minimum WBF: " + str(minWBF) + ".")
+    print("Maximum WBF: " + str(maxWBF) + ".")
+    print("Average WBF: " + str(meanWBF) + ".")
+    print("Standard Deviation: " + str(stdWBF) + ".")
+    print("This program uses the following default parameters which can be " +
+          "changed in the first few lines of this program.")
+    print("minWingBeat = " + str(minWingBeat) + " (any file with a " + 
+          "fundamental frequency below this is considered noise).") 
+    print("maxWingBeat = " + str(maxWingBeat) + " (any file with a " +
+          "fundamental frequency above this is considered noise).") 
+    print("slidingWindow = " + str(slidingWindow) + " (the size of snippets " +
+          "to examine).")
+    print("stepSize = " + str(stepSize) + " (the jump between snippets).") 
+    print("complexityThreshold = " + str(complexityThreshold) + " (the " +
+          "higher this value the more aggressively the script is when " +
+          "labeling files has noise).")
+    print("interval = " + str(interval) + " (used to smooth the data for " +
+          "the circadian rhythm plot. This value is measured in minutes).")
+
+  
 # Supporting function definitions
+
+###############################################################################
+# Sets the global delimiter based on the OS being used
+#
+# Parameters
+# None
+#
+# Output
+# None
+
+def getOSDelim():
+    global DELIM
+    if os.name == 'nt': DELIM = "\\"
+    else: DELIM = "/"
+    
+###############################################################################
 
 ###############################################################################
 # Gets the earlist and latest date of files at a given path assuming the
 # following format for the filenames: 
 #               [year][month][day]-[hour]_[minute]_[second]
 #
+
 # Parameters
 # path: The path to the directory to search for files
 # lowerDate: The lower bound on the date the function will consider
 # upperDate: The upper bound on the date the function will consider
+#
+# Output
+# Returns the earliest and latest date
 
 def getDateRange(path, lowerDate, upperDate):
     files = getFileNames(path, '.wav')
@@ -89,6 +212,23 @@ def getDateRange(path, lowerDate, upperDate):
     dates.sort()
     return (dates[0], dates[len(dates) - 1])
 
+###############################################################################
+
+###############################################################################
+# Saves a list of lists as numpy arrays and returns them.
+#
+# Parameters
+# dataLists: A list of data that should be converted to numpy arrays
+#
+# Output
+# arrayLists: A list of the data in numpy array form
+
+def convertToArray(dataLists):
+    arrayLists = []
+    for dataList in dataLists:
+        arrayLists.append(np.array(dataList))
+    return arrayLists
+    
 ###############################################################################
 
 ###############################################################################
@@ -106,7 +246,7 @@ def fileToDate(filename):
                                           [year, day, hr, minute, sec])) 
     return dt.datetime(year, month, day, hr, minute, sec)
 
-##############################################################################
+###############################################################################
 
 ###############################################################################
 # Gets all filenames with a given extension and returns them in a list
@@ -125,6 +265,50 @@ def getFileNames(path, extension):
             files.append(file)
     files.sort() 
     return files
+
+###############################################################################
+
+###############################################################################
+# Creates a directory with a given name in a given path
+
+# Parameters
+# path: The path to where the directory should be created
+# directoryName: The name of the directory to be created
+
+# Output
+# None
+
+def createDirectory(path, directoryName):
+    directoryPath = path + DELIM + directoryName
+    try:
+        os.makedirs(directoryPath)
+    except OSError:
+        if not os.path.isdir(directoryPath):
+            raise
+        else: pass
+
+###############################################################################
+
+###############################################################################
+# Save the FFT and associated indicies to disk
+
+# Parameters
+# path: The path to the directory to save the files to
+# allFFT: The windows of FFT data where there is potential insect data
+# allStartIndex: The starting index of where the potential insect data is
+# allEndIndex: The ending index of where the potential insect data is
+
+# Output
+# Returns the values back as numpy arrays 
+
+def saveFFT(path, FFTList, startIndexList, endIndexList):
+    allFFT = np.array(FFTList)
+    allStartIndex = np.array(startIndexList)
+    allEndIndex = np.array(endIndexList)
+    scipy.io.savemat(path + DELIM + FFT_ID, {FFT_ID: allFFT})
+    scipy.io.savemat(path + DELIM + START_ID, {START_ID: allStartIndex})
+    scipy.io.savemat(path + DELIM + END_ID, {END_ID: allEndIndex}) 
+    return allFFT, allStartIndex, allEndIndex
 
 ###############################################################################
 
@@ -159,7 +343,7 @@ def processInBatch_1_1(path, slidingWindow, stepSize, minWingBeat, maxWingBeat):
 
     for file in fileNames:
         try:
-            filePath = path + "/" + file
+            filePath = path + DELIM + file
             results = test_1_1(filePath, slidingWindow, stepSize,
                     minWingBeat, maxWingBeat)
 
@@ -174,24 +358,15 @@ def processInBatch_1_1(path, slidingWindow, stepSize, minWingBeat, maxWingBeat):
             print("Cannot process file: " + file)
             print("Moving unprocessed file to 'cannot_process' directory")
         
-            cannotProcessDir = path + "/cannot_process/"
-            try:
-                os.makedirs(cannotProcessDir)
-
-            except OSError:
-                if not os.path.isdir(cannotProcessDir):
-                    raise
-                else: pass
-
-#            os.rename(path + "/" + file, cannotProcessDir + file) 
+            cannotProcessDir = path + DELIM + "cannot_process" + DELIM
+            createDirectory(path, "cannot_process")
+            
+#            os.rename(path + DELIM + file, cannotProcessDir + file) 
 
 
-    allFFT = np.array(FFTList)
-    allStartIndex = np.array(StartIndexList)
-    allEndIndex = np.array(EndIndexList)
-    scipy.io.savemat(path + "/FFT", {"FFT": allFFT})
-    scipy.io.savemat(path + "/all_start_index", {"Start": allStartIndex})
-    scipy.io.savemat(path + "/all_end_index", {"End": allEndIndex}) 
+    allFFT, allStartIndex, allEndIndex = convertToArray(
+        list([FFTList, StartIndexList, EndIndexList]))
+    saveFFT(path, allFFT, allStartIndex, allEndIndex) 
     return allFFT, allStartIndex, allEndIndex
 
 ###############################################################################
@@ -314,7 +489,7 @@ def computeWBF(path, allFFT, sampleRate):
         filePath = askopenfilename(filetypes=[('all files', '.*'), 
                                               ('MAT files', '.mat')])
         allFFTFile = scipy.io.loadmat(filePath)
-        allFFT = allFFTFile['FFT']
+        allFFT = allFFTFile[FFT_ID]
 
     for fft in allFFT:
         loc = np.argmax(fft)
@@ -322,7 +497,7 @@ def computeWBF(path, allFFT, sampleRate):
         allWBF.append(np.round(freqVals[loc]) + 1)
 
     allWBF = np.array(allWBF)
-    scipy.io.savemat(path + "/all_WBF", {"WBF": allFFT})
+    scipy.io.savemat(path + DELIM + WBF_ID, {WBF_ID: allFFT})
     return allWBF
 
 ###############################################################################
