@@ -3,14 +3,22 @@ import re
 from math import ceil
 import shutil
 import soundfile as sf
+import scipy.stats
 import scipy.io
 import scipy.signal
 import numpy as np
 import numpy.fft
-from Tkinter import Tk
+import Tkinter as tk 
 from tkFileDialog import askdirectory, askopenfilename
+import tkMessageBox
 import calendar
 import datetime as dt
+import matplotlib
+
+matplotlib.use('TkAgg')
+
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
 
 MONTHS = dict((v, k) for k, v in enumerate(calendar.month_abbr))
 FFT_ID = "all_fft"
@@ -18,6 +26,8 @@ START_ID = "all_start_index"
 END_ID = "all_end_index"
 WBF_ID = "all_WBF"
 STAMP_FORMAT = "%m/%d/%Y at %I:%M:%S %p"
+HRS_IN_DAY = 24
+MIN_IN_DAY = 1440
 
 #Parameters
 
@@ -28,10 +38,96 @@ stepSize = 128
 complexityThreshold = 0.00007
 interval = 5
 
-def main():
+class AnalyzerGui:
+    def __init__(self, root):
+        self.master = root
+        self.path = os.getcwd()
+        self.master.title("Insect analyzer")
+
+        self.pathLabel = tk.Label(self.master, text="Path to data directory")
+        self.pathLabel.grid(row=0, column=0)
+
+        self.pathEntry = tk.Entry(self.master, width=50)
+        self.pathEntry.insert(0, self.path)
+        self.pathEntry.grid(row=0, column=1)
+
+        self.pathButton = tk.Button(self.master, anchor="se",
+                                    text="Browse...", command=self.askPath)
+        self.pathButton.grid(row=0, column=2)
+
+        self.runButton = tk.Button(self.master, text="Run",
+                                   command=self.run)
+        self.runButton.grid(row=1, column=0)
+
+#        self.outputMsg = tk.Message(self.master,
+#                                    text="Data statistics will be output here")
+#        self.outputMsg.grid(row=2, column=0, columnspan=2, sticky="w")
+
+        self.histogram = self.setupFigure((6, 4), 100, 3, 0, columnspan=3)
+        self.gaussian = self.setupFigure((6, 4), 100, 3, 3, columnspan=3)
+        self.circadian = self.setupFigure((12, 4), 100, 4, 0, columnspan=6)
+
+    def start(self):
+        self.master.mainloop()
+
+    def askPath(self):
+        self.path = askdirectory()
+        self.pathEntry.delete(0, tk.END)
+        self.pathEntry.insert(0, self.path)
+    
+    def write(self, output):
+        self.outputMsg.configure(text=output)        
+    
+    def run(self):
+        try:
+            self.path = self.pathEntry.get() 
+            main(self.path, self)
+        except OSError as e:
+            tkMessageBox.showerror("Directory Error",
+                                   "Error loading directory: " + self.path)    
+
+    def setupFigure(self, size, dpi, row, column, rowspan=1, columnspan=1):
+        figure = Figure(figsize=size, dpi=dpi, tight_layout=True)
+        canvas = FigureCanvasTkAgg(figure=figure, master=self.master)
+        canvas.show()
+        canvasWidget = canvas.get_tk_widget()
+        canvasWidget.grid(row=row, column=column,
+                         rowspan=rowspan, columnspan=columnspan)
+        return figure
+
+    def plotWingBeatH(self, figure, data):
+        bins = [x for x in range(minWingBeat, 
+                                 maxWingBeat + 200 + 1, 200)]
+        data.sort()
+        figure.clf()
+        axes = figure.add_subplot(111)
+        axes.hist(data, bins=bins, linewidth=1, edgecolor='k')
+        axes.set_xlabel("Wing Beat Frequency")
+        axes.set_ylabel("Total Occurances") 
+ 
+    def plotWingBeatG(self, figure, data, mean, std):
+        data.sort()
+        figure.clf()
+        axes = figure.add_subplot(111)
+        gaussian = scipy.stats.norm.pdf(data, mean, std)
+        axes.plot(data, gaussian, '-o')
+        axes.set_xlabel("Wing Beat Frequency")
+        axes.set_ylabel("Percentage of Total Occurances") 
+     
+    def plotCircadian(self, figure, data):
+        figure.clf()
+        axes = figure.add_subplot(111)
+        axes.plot(np.arange(MIN_IN_DAY), data)
+        axes.set_xticks(np.arange(0, MIN_IN_DAY + 1, MIN_IN_DAY / HRS_IN_DAY ))
+        axes.set_xticklabels(np.arange(0, HRS_IN_DAY + 1))
+        axes.set_xlabel("Hour in the Day")
+        axes.set_ylabel("Average Occurance per Day")
+
+    def drawFigure(self, figure):
+        figure.canvas.draw()
+
+def main(directory, gui):
     #Get the directory containing audio files 
-    Tk().withdraw() # Disable a full GUI
-    directory = askdirectory()
     getOSDelim()
     #TODO: 
     #       Calculate earliest and latest date [DONE]
@@ -135,42 +231,53 @@ def main():
 
     numFilesAccepted = len(allStartIndexGood)
     numFilesRejected = len(allStartIndexBad)
-    numBins = ceil(numFilesAccepted/10.0)
-    
-    
-    print("You are investigating a folder named '" + 
-          directory.split(DELIM)[-1] + "'.")
-    print("There are " + str(len(files)) + " wav files.")
-    print("They are sampled at " + str(sampleRate) + " Hz.") 
-    print("The earliest time stamp is " + earlyTimeStamp +
-          ", the latest is " + lateTimeStamp + ".")
-    print("This indicates a time span of " + str(int(deltaHours)) + 
-          " hours, " + str(int(deltaMinutes)) + " minutes and " + 
-          str(int(deltaSeconds)) + " seconds.")
-    print(str(numFilesRejected) + " files have been rejected at noise.")
-    print(str(numFilesAccepted) + " files have been accepted as containing " +
-          "least one insect encounter.")
-    print("Considering only the " + str(numFilesAccepted) + " good files, we" +
-          " observe the following statistics for the WBF.")
-    print("Minimum WBF: " + str(minWBF) + ".")
-    print("Maximum WBF: " + str(maxWBF) + ".")
-    print("Average WBF: " + str(meanWBF) + ".")
-    print("Standard Deviation: " + str(stdWBF) + ".")
-    print("This program uses the following default parameters which can be " +
-          "changed in the first few lines of this program.")
-    print("minWingBeat = " + str(minWingBeat) + " (any file with a " + 
-          "fundamental frequency below this is considered noise).") 
-    print("maxWingBeat = " + str(maxWingBeat) + " (any file with a " +
-          "fundamental frequency above this is considered noise).") 
-    print("slidingWindow = " + str(slidingWindow) + " (the size of snippets " +
-          "to examine).")
-    print("stepSize = " + str(stepSize) + " (the jump between snippets).") 
-    print("complexityThreshold = " + str(complexityThreshold) + " (the " +
-          "higher this value the more aggressively the script is when " +
-          "labeling files has noise).")
-    print("interval = " + str(interval) + " (used to smooth the data for " +
-          "the circadian rhythm plot. This value is measured in minutes).")
+    numBins = int(ceil(numFilesAccepted/10.0))
+   
+    outputString = "You are investigating a folder named '" + \
+                   directory.split(DELIM)[-1] + "'.\n"
+    outputString += "There are " + str(len(files)) + " wav files." + \
+                    "They are sampled at " + str(sampleRate) + " Hz.\n" 
+    outputString += "The earliest time stamp is " + earlyTimeStamp + \
+                    ", the latest is " + lateTimeStamp + ".\n" 
+    outputString += "This indicates a time span of " + str(int(deltaHours)) + \
+                    " hours, " + str(int(deltaMinutes)) + " minutes and " + \
+                    str(int(deltaSeconds)) + " seconds.\n"
+    outputString += str(numFilesRejected) + " files have been rejected at " + \
+                    "noise.\n"
+    outputString += str(numFilesAccepted) + " files have been accepted as " + \
+                    "containing least one insect encounter.\n" 
+    outputString += "Considering only the " + str(numFilesAccepted) + \
+                    " good files, we observe the following statistics for the WBF.\n"
+    outputString += "Minimum WBF: " + str(minWBF) + ".\n"
+    outputString += "Maximum WBF: " + str(maxWBF) + ".\n"
+    outputString += "Average WBF: " + str(meanWBF) + ".\n"
+    outputString += "Standard Deviation: " + str(stdWBF) + ".\n"
+    outputString += "This program uses the following default parameters " + \
+                    "which can be changed in the first few lines of this " + \
+                    "program.\n"
+    outputString += "minWingBeat = " + str(minWingBeat) + " (any file with " + \
+                    "a fundamental frequency below this is considered noise).\n"
+    outputString += "maxWingBeat = " + str(maxWingBeat) + " (any file with " + \
+                    "a fundamental frequency above this is considered noise).\n"
+    outputString += "slidingWindow = " + str(slidingWindow) + " (the size " + \
+                    " of snippets to examine).\n"
+    outputString += "stepSize = " + str(stepSize) + " (the jump between " + \
+                    "snippets).\n"
+    outputString += "complexityThreshold = " + str(complexityThreshold) + \
+                    " (the higher this value the more aggressively the " + \
+                    "script is when labeling files has noise).\n"
+    outputString += "interval = " + str(interval) + " (used to smooth the " + \
+                    "data for the circadian rhythm plot. This value is " + \
+                    "measured in minutes).\n"
 
+    circadianData = computeCircadianData(goodPath)
+    gui.plotWingBeatH(gui.histogram, allWBF)
+    gui.plotWingBeatG(gui.gaussian, allWBF, meanWBF, stdWBF)
+    gui.plotCircadian(gui.circadian, circadianData)
+    gui.drawFigure(gui.histogram)
+    gui.drawFigure(gui.gaussian)
+    gui.drawFigure(gui.circadian)
+    #gui.write(outputString)
   
 # Supporting function definitions
 
@@ -450,7 +557,6 @@ def test_1_1(filePath, slidingWindowLength, stepSize, targetedFrequencyStart,
 
     return (decision, startIndex, endIndex, fftWindow[0], fftWindowF[0], sampleRate)
 
-
 ###############################################################################
 
 ###############################################################################
@@ -479,8 +585,17 @@ def computeComplexityScore(allFFT):
 ###############################################################################
 
 ###############################################################################
-# TODO: Give description of this function. What is WBF?
-# TODO: Give better parameter names
+# Computes the wing beat frequencies for the given frequency data 
+
+# Parameters
+# path: The path to the directory of the frequency data. This is only used
+#       if no frequency data is passed in.
+# allFFT: The frequency data. If this is None then an attempt will be made to
+#         load the frequency data from the given path
+# sampleRate: The rate the frequency data was sampled at.
+
+# Output
+# allWBF: The wing beat frequencies for all the frequency data provided
 def computeWBF(path, allFFT, sampleRate):
     NFFT = 1024
     allWBF = []
@@ -502,4 +617,35 @@ def computeWBF(path, allFFT, sampleRate):
 
 ###############################################################################
 
-main()
+###############################################################################
+# Computes the circadian rhythm data for files in a directory given by path.
+# Assumes the files are in the following format: 
+#                      [year][month][day]-[hour]_[minute]_[second]
+#
+# Parameters
+# path: The path to the directory of files to analyze 
+#
+# Output
+# TODO: WHAT?
+
+def computeCircadianData(path):
+    files = getFileNames(path, ".wav")     
+    dates = list(map(lambda f: fileToDate(f), files))
+    dates.sort()
+    currentDate = dates[0].date
+    occurances = np.zeros(MIN_IN_DAY)
+    numDays = 1
+    for date in dates:
+        if date.date < currentDate:
+            numDays += 1    
+        time = date.time()
+        minute = time.hour * 60 + time.minute 
+        occurances[minute] += 1
+    return occurances / float(numDays) 
+    
+    
+###############################################################################
+
+rootWindow = tk.Tk()
+gui = AnalyzerGui(rootWindow)
+gui.start()
