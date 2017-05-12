@@ -1,5 +1,6 @@
 *.sh
 *.png
+*.pyc
 mix/*
 mix.*
 *.m

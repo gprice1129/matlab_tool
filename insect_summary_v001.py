@@ -1,132 +1,24 @@
 import os
 import re
+from analyzergui import *
+import analyzerglobals as ag
 from math import ceil
 import shutil
 import soundfile as sf
-import scipy.stats
 import scipy.io
 import scipy.signal
 import numpy as np
 import numpy.fft
-import Tkinter as tk 
 from tkFileDialog import askdirectory, askopenfilename
-import tkMessageBox
 import calendar
 import datetime as dt
-import matplotlib
 
-matplotlib.use('TkAgg')
+#TODO: Bug: Doesn't correctly choose to generate new files if parameters change
+#      Bug: Doesn't correctly handle the case where user chooses a directory
+#           with no data files
+#      Feature: Center the parameter window when it is opened
 
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
-
-MONTHS = dict((v, k) for k, v in enumerate(calendar.month_abbr))
-FFT_ID = "all_fft"
-START_ID = "all_start_index"
-END_ID = "all_end_index"
-WBF_ID = "all_WBF"
-STAMP_FORMAT = "%m/%d/%Y at %I:%M:%S %p"
-HRS_IN_DAY = 24
-MIN_IN_DAY = 1440
-
-#Parameters
-
-minWingBeat = 400
-maxWingBeat = 1800
-slidingWindow = 1024
-stepSize = 128
-complexityThreshold = 0.00007
-interval = 5
-
-class AnalyzerGui:
-    def __init__(self, root):
-        self.master = root
-        self.path = os.getcwd()
-        self.master.title("Insect analyzer")
-
-        self.pathLabel = tk.Label(self.master, text="Path to data directory")
-        self.pathLabel.grid(row=0, column=0)
-
-        self.pathEntry = tk.Entry(self.master, width=50)
-        self.pathEntry.insert(0, self.path)
-        self.pathEntry.grid(row=0, column=1)
-
-        self.pathButton = tk.Button(self.master, anchor="se",
-                                    text="Browse...", command=self.askPath)
-        self.pathButton.grid(row=0, column=2)
-
-        self.runButton = tk.Button(self.master, text="Run",
-                                   command=self.run)
-        self.runButton.grid(row=1, column=0)
-
-#        self.outputMsg = tk.Message(self.master,
-#                                    text="Data statistics will be output here")
-#        self.outputMsg.grid(row=2, column=0, columnspan=2, sticky="w")
-
-        self.histogram = self.setupFigure((6, 4), 100, 3, 0, columnspan=3)
-        self.gaussian = self.setupFigure((6, 4), 100, 3, 3, columnspan=3)
-        self.circadian = self.setupFigure((12, 4), 100, 4, 0, columnspan=6)
-
-    def start(self):
-        self.master.mainloop()
-
-    def askPath(self):
-        self.path = askdirectory()
-        self.pathEntry.delete(0, tk.END)
-        self.pathEntry.insert(0, self.path)
-    
-    def write(self, output):
-        self.outputMsg.configure(text=output)        
-    
-    def run(self):
-        try:
-            self.path = self.pathEntry.get() 
-            main(self.path, self)
-        except OSError as e:
-            tkMessageBox.showerror("Directory Error",
-                                   "Error loading directory: " + self.path)    
-
-    def setupFigure(self, size, dpi, row, column, rowspan=1, columnspan=1):
-        figure = Figure(figsize=size, dpi=dpi, tight_layout=True)
-        canvas = FigureCanvasTkAgg(figure=figure, master=self.master)
-        canvas.show()
-        canvasWidget = canvas.get_tk_widget()
-        canvasWidget.grid(row=row, column=column,
-                         rowspan=rowspan, columnspan=columnspan)
-        return figure
-
-    def plotWingBeatH(self, figure, data):
-        bins = [x for x in range(minWingBeat, 
-                                 maxWingBeat + 200 + 1, 200)]
-        data.sort()
-        figure.clf()
-        axes = figure.add_subplot(111)
-        axes.hist(data, bins=bins, linewidth=1, edgecolor='k')
-        axes.set_xlabel("Wing Beat Frequency")
-        axes.set_ylabel("Total Occurances") 
- 
-    def plotWingBeatG(self, figure, data, mean, std):
-        data.sort()
-        figure.clf()
-        axes = figure.add_subplot(111)
-        gaussian = scipy.stats.norm.pdf(data, mean, std)
-        axes.plot(data, gaussian, '-o')
-        axes.set_xlabel("Wing Beat Frequency")
-        axes.set_ylabel("Percentage of Total Occurances") 
-     
-    def plotCircadian(self, figure, data):
-        figure.clf()
-        axes = figure.add_subplot(111)
-        axes.plot(np.arange(MIN_IN_DAY), data)
-        axes.set_xticks(np.arange(0, MIN_IN_DAY + 1, MIN_IN_DAY / HRS_IN_DAY ))
-        axes.set_xticklabels(np.arange(0, HRS_IN_DAY + 1))
-        axes.set_xlabel("Hour in the Day")
-        axes.set_ylabel("Average Occurance per Day")
-
-    def drawFigure(self, figure):
-        figure.canvas.draw()
-
-def main(directory, gui):
+def main(directory, gui, state):
     #Get the directory containing audio files 
     getOSDelim()
     #TODO: 
@@ -142,8 +34,8 @@ def main(directory, gui):
     lowerDate = dt.datetime(dt.MINYEAR, 1, 1, 0, 0, 0)
     upperDate = dt.datetime(dt.MAXYEAR, 12, 31, 23, 59, 59)
     earlyDate, lateDate = getDateRange(directory, lowerDate, upperDate)
-    earlyTimeStamp = earlyDate.strftime(STAMP_FORMAT)
-    lateTimeStamp = lateDate.strftime(STAMP_FORMAT)
+    earlyTimeStamp = earlyDate.strftime(ag.STAMP_FORMAT)
+    lateTimeStamp = lateDate.strftime(ag.STAMP_FORMAT)
     # Generate timestamps
     
      
@@ -156,29 +48,30 @@ def main(directory, gui):
     recalculate = False
     files = getFileNames(directory, ".wav")
     try:
-        allFFTData = scipy.io.loadmat(directory + DELIM + FFT_ID + ".mat")
-        allFFT = allFFTData[FFT_ID]
+        allFFTData = scipy.io.loadmat(directory + DELIM + ag.FFT_ID + ".mat")
+        allFFT = allFFTData[ag.FFT_ID]
         if len(allFFT) == len(files):
             print("Checking FFT files... good")
             print("Attempting load on all_start_index.mat and all_end_index.mat")
             allStartIndexData = scipy.io.loadmat(directory + DELIM + 
-                                                 START_ID + ".mat")
+                                                 ag.START_ID + ".mat")
             allEndIndexData = scipy.io.loadmat(directory + DELIM +
-                                               END_ID + ".mat")
-            allStartIndex = allStartIndexData[START_ID][0]
-            allEndIndex = allEndIndexData[END_ID][0] 
+                                               ag.END_ID + ".mat")
+            allStartIndex = allStartIndexData[ag.START_ID][0]
+            allEndIndex = allEndIndexData[ag.END_ID][0] 
         else: recalculate = True
     except IOError:
        recalculate = True 
     finally:
         if recalculate:
             # Otherwise generate FFT file
-            allFFT, allStartIndex, allEndIndex = processInBatch_1_1(directory,
-                                                                    slidingWindow,
-                                                                    stepSize,
-                                                                    minWingBeat,
-                                                                    maxWingBeat)
-    
+            fftData = processInBatch_1_1(directory,
+                                         state.slidingWindow,
+                                         state.stepSize,
+                                         state.minWingBeat,
+                                         state.maxWingBeat)
+            allFFT, allStartIndex, allEndIndex = fftData
+                
     sampleRate = sf.read(directory + DELIM + files[0])[1]
     score = computeComplexityScore(allFFT)
     indexOfGood = []
@@ -202,7 +95,7 @@ def main(directory, gui):
     indexOfBad = []
     
     for i in range(len(score)):
-        if score[i] >= complexityThreshold:
+        if score[i] >= state.complexityThreshold:
             indexOfGood.append(i)
             shutil.copy(directory + DELIM + files[i], goodPath)
             allFFTGood.append(allFFT[i])
@@ -255,27 +148,25 @@ def main(directory, gui):
     outputString += "This program uses the following default parameters " + \
                     "which can be changed in the first few lines of this " + \
                     "program.\n"
-    outputString += "minWingBeat = " + str(minWingBeat) + " (any file with " + \
+    outputString += "minWingBeat = " + str(state.minWingBeat) + " (any file with " + \
                     "a fundamental frequency below this is considered noise).\n"
-    outputString += "maxWingBeat = " + str(maxWingBeat) + " (any file with " + \
+    outputString += "maxWingBeat = " + str(state.maxWingBeat) + " (any file with " + \
                     "a fundamental frequency above this is considered noise).\n"
-    outputString += "slidingWindow = " + str(slidingWindow) + " (the size " + \
+    outputString += "slidingWindow = " + str(state.slidingWindow) + " (the size " + \
                     " of snippets to examine).\n"
-    outputString += "stepSize = " + str(stepSize) + " (the jump between " + \
+    outputString += "stepSize = " + str(state.stepSize) + " (the jump between " + \
                     "snippets).\n"
-    outputString += "complexityThreshold = " + str(complexityThreshold) + \
+    outputString += "complexityThreshold = " + str(state.complexityThreshold) + \
                     " (the higher this value the more aggressively the " + \
                     "script is when labeling files has noise).\n"
-    outputString += "interval = " + str(interval) + " (used to smooth the " + \
+    outputString += "interval = " + str(state.interval) + " (used to smooth the " + \
                     "data for the circadian rhythm plot. This value is " + \
                     "measured in minutes).\n"
 
     circadianData = computeCircadianData(goodPath)
-    gui.plotWingBeatH(gui.histogram, allWBF)
-    gui.plotWingBeatG(gui.gaussian, allWBF, meanWBF, stdWBF)
+    gui.plotWingBeat(gui.histogram, allWBF, meanWBF, stdWBF)
     gui.plotCircadian(gui.circadian, circadianData)
     gui.drawFigure(gui.histogram)
-    gui.drawFigure(gui.gaussian)
     gui.drawFigure(gui.circadian)
     #gui.write(outputString)
   
@@ -348,7 +239,7 @@ def convertToArray(dataLists):
 
 def fileToDate(filename):
     year, month, day, hr, minute, sec = re.findall('\d+|[A-Z][a-z]+', filename);
-    month = MONTHS[month] #TODO: This is really unsafe, should do error checking
+    month = ag.MONTHS[month] #TODO: This is really unsafe, should do error checking
     year, day, hr, minute, sec = list(map(lambda x: int(x),
                                           [year, day, hr, minute, sec])) 
     return dt.datetime(year, month, day, hr, minute, sec)
@@ -412,9 +303,9 @@ def saveFFT(path, FFTList, startIndexList, endIndexList):
     allFFT = np.array(FFTList)
     allStartIndex = np.array(startIndexList)
     allEndIndex = np.array(endIndexList)
-    scipy.io.savemat(path + DELIM + FFT_ID, {FFT_ID: allFFT})
-    scipy.io.savemat(path + DELIM + START_ID, {START_ID: allStartIndex})
-    scipy.io.savemat(path + DELIM + END_ID, {END_ID: allEndIndex}) 
+    scipy.io.savemat(path + DELIM + ag.FFT_ID, {ag.FFT_ID: allFFT})
+    scipy.io.savemat(path + DELIM + ag.START_ID, {ag.START_ID: allStartIndex})
+    scipy.io.savemat(path + DELIM + ag.END_ID, {ag.END_ID: allEndIndex}) 
     return allFFT, allStartIndex, allEndIndex
 
 ###############################################################################
@@ -604,7 +495,7 @@ def computeWBF(path, allFFT, sampleRate):
         filePath = askopenfilename(filetypes=[('all files', '.*'), 
                                               ('MAT files', '.mat')])
         allFFTFile = scipy.io.loadmat(filePath)
-        allFFT = allFFTFile[FFT_ID]
+        allFFT = allFFTFile[ag.FFT_ID]
 
     for fft in allFFT:
         loc = np.argmax(fft)
@@ -612,7 +503,7 @@ def computeWBF(path, allFFT, sampleRate):
         allWBF.append(np.round(freqVals[loc]) + 1)
 
     allWBF = np.array(allWBF)
-    scipy.io.savemat(path + DELIM + WBF_ID, {WBF_ID: allFFT})
+    scipy.io.savemat(path + DELIM + ag.WBF_ID, {ag.WBF_ID: allFFT})
     return allWBF
 
 ###############################################################################
@@ -633,7 +524,7 @@ def computeCircadianData(path):
     dates = list(map(lambda f: fileToDate(f), files))
     dates.sort()
     currentDate = dates[0].date
-    occurances = np.zeros(MIN_IN_DAY)
+    occurances = np.zeros(ag.MIN_IN_DAY)
     numDays = 1
     for date in dates:
         if date.date < currentDate:
@@ -646,6 +537,5 @@ def computeCircadianData(path):
     
 ###############################################################################
 
-rootWindow = tk.Tk()
-gui = AnalyzerGui(rootWindow)
+gui = AnalyzerWindow(tk.Tk(), AnalyzerState(), main)
 gui.start()
