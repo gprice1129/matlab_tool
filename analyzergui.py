@@ -10,7 +10,15 @@ import scipy.stats
 import numpy as np
 import analyzerglobals as ag
 
-class AnalyzerWindow:
+class BasicWindow:
+    def showMessage(self, messageTitle, message):
+        tkMessageBox.showinfo(messageTitle, message)
+
+    def showError(self, errorTitle, error):
+        tkMessageBox.showerror(errorTitle, error)
+
+
+class AnalyzerWindow(BasicWindow):
     def __init__(self, root, analyzerState, mainFunction):
         self.master = root
         self.state = analyzerState 
@@ -51,6 +59,7 @@ class AnalyzerWindow:
     def askPath(self):
         self.path = askdirectory()
         self.pathEntry.delete(0, tk.END)
+        self.pathEntry.insert(0, self.path)
 
     def write(self, output):
         self.outputMsg.configure(text=output)        
@@ -59,9 +68,13 @@ class AnalyzerWindow:
         try:
             self.path = self.pathEntry.get() 
             self.mainFunction(self.path, self, self.state)
+            self.state.runSuccess()
         except OSError as e:
-            tkMessageBox.showerror("Directory Error",
-                                   "Error loading directory: " + self.path)    
+            self.showError("Directory Error",
+                           "Error loading directory: " + self.path)    
+        except RuntimeError as e:
+            self.showError("Data Error",
+                           "All data is outside of the parameter ranges")
 
     def setupFigure(self, size, dpi, row, column, rowspan=1, columnspan=1):
         figure = Figure(figsize=size, dpi=dpi, tight_layout=True)
@@ -104,7 +117,6 @@ class AnalyzerWindow:
         data.sort()
         figure.clf()
         gaussian = scipy.stats.norm.pdf(data, mean, std)
-
         axes = figure.add_subplot(1,2,1)
         axes.hist(data, bins=bins, linewidth=1, edgecolor='k')
         axes.set_xlabel("Wing Beat Frequency")
@@ -137,8 +149,24 @@ class AnalyzerState:
         self.stepSize = ss
         self.complexityThreshold = ct
         self.interval = interval
+        self.changed = False
 
-class ParameterWindow:
+    def runSuccess(self):
+        self.changed = False
+
+    def parameterUpdate(self, minWingBeat, maxWingBeat, stepSize,
+                        slidingWindow, complexityThreshold):
+        self.minWingBeat = int(minWingBeat)
+        self.maxWingBeat = int(maxWingBeat)
+        self.stepSize = int(stepSize)
+        self.slidingWindow = int(slidingWindow)
+        self.complexityThreshold = complexityThreshold
+        self.changed = True
+
+    def hasChanged(self):
+        return self.changed
+
+class ParameterWindow(BasicWindow):
     def __init__(self, root):
         self.master = root
         self.window = tk.Toplevel(root.master)
@@ -193,16 +221,13 @@ class ParameterWindow:
             stepSize = float(self.stepSizeEntry.get())
             slidingWindow = float(self.slidingWindowEntry.get())
             complexityThreshold = float(self.complexityEntry.get())
-            state.minWingBeat = int(minWingBeat)
-            state.maxWingBeat = int(maxWingBeat)
-            state.stepSize = int(stepSize)
-            state.slidingWindow = int(slidingWindow)
-            state.complexityThreshold = complexityThreshold
-            tkMessageBox.showinfo("Update Dialog",
-                                  "Updated parameters successfully")
+            state.parameterUpdate(minWingBeat, maxWingBeat, stepSize,
+                                  slidingWindow, complexityThreshold)
+            self.showMessage("Update Dialog",
+                             "Parameters updated successfully")
         except ValueError:
-            tkMessageBox.showerror("Parameter Error",
-                                   "Expected numerical input for parameter fields.") 
+            self.showError("Parameter Error",
+                           "Expected numerical input for parameter fields.") 
 
     def close(self):
         self.master.parameterWindow = None

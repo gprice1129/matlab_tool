@@ -17,27 +17,24 @@ import datetime as dt
 #      Bug: Doesn't correctly handle the case where user chooses a directory
 #           with no data files
 #      Feature: Center the parameter window when it is opened
+#      Feature: Add dusk and dawn parameters and mark them on the plot
 
 def main(directory, gui, state):
-    #Get the directory containing audio files 
     getOSDelim()
-    #TODO: 
-    #       Calculate earliest and latest date [DONE]
-    #       Generate timestamps 
-    #       Get difference in dates [DONE]
-    #       Try to load existing FFT data and check that there is no new data [DONE]
-    #       Otherwise generate FFT file
-    #       Seperate into "Good" and "Bad" data
-    #       Compute WBF of "Good" data
+
+    files = getFileNames(directory, ".wav")
+    # If no files are found then report an error and abort
+    if files == []:
+        gui.showError("File Error", "No .wav files found on path: " + directory)
+        return
 
     # Calculate earliest and latest date
     lowerDate = dt.datetime(dt.MINYEAR, 1, 1, 0, 0, 0)
     upperDate = dt.datetime(dt.MAXYEAR, 12, 31, 23, 59, 59)
     earlyDate, lateDate = getDateRange(directory, lowerDate, upperDate)
+    # Generate timestamps
     earlyTimeStamp = earlyDate.strftime(ag.STAMP_FORMAT)
     lateTimeStamp = lateDate.strftime(ag.STAMP_FORMAT)
-    # Generate timestamps
-    
      
     # Get difference in dates
     deltaDate = lateDate - earlyDate
@@ -46,11 +43,10 @@ def main(directory, gui, state):
 
     # Try to load existing FFT data and check that there is no new data
     recalculate = False
-    files = getFileNames(directory, ".wav")
     try:
         allFFTData = scipy.io.loadmat(directory + DELIM + ag.FFT_ID + ".mat")
         allFFT = allFFTData[ag.FFT_ID]
-        if len(allFFT) == len(files):
+        if len(allFFT) == len(files) and not gui.state.hasChanged():
             print("Checking FFT files... good")
             print("Attempting load on all_start_index.mat and all_end_index.mat")
             allStartIndexData = scipy.io.loadmat(directory + DELIM + 
@@ -72,6 +68,7 @@ def main(directory, gui, state):
                                          state.maxWingBeat)
             allFFT, allStartIndex, allEndIndex = fftData
                 
+    # Seperate data into insect occurances and noise
     sampleRate = sf.read(directory + DELIM + files[0])[1]
     score = computeComplexityScore(allFFT)
     indexOfGood = []
@@ -116,6 +113,14 @@ def main(directory, gui, state):
         list([allFFTBad, allStartIndexBad, allEndIndexBad]))
     saveFFT(badPath, allFFTBad, allStartIndexBad, allEndIndexBad)
 
+    if allFFTGood == []:
+        gui.showMessage("Data Report", 
+                        "All data on path: " + directory +
+                        "Was found to be noise.\n\n." +
+                        "You may try reducing the complexity threshold for " +
+                        "better results")
+        return
+    # Compute plots 
     allWBF = computeWBF(goodPath, allFFTGood, sampleRate)
     minWBF = np.amin(allWBF)
     maxWBF = np.amax(allWBF)
@@ -126,6 +131,7 @@ def main(directory, gui, state):
     numFilesRejected = len(allStartIndexBad)
     numBins = int(ceil(numFilesAccepted/10.0))
    
+    # TODO: Make a function for string output 
     outputString = "You are investigating a folder named '" + \
                    directory.split(DELIM)[-1] + "'.\n"
     outputString += "There are " + str(len(files)) + " wav files." + \
@@ -168,6 +174,7 @@ def main(directory, gui, state):
     gui.plotCircadian(gui.circadian, circadianData)
     gui.drawFigure(gui.histogram)
     gui.drawFigure(gui.circadian)
+         
     #gui.write(outputString)
   
 # Supporting function definitions
@@ -329,7 +336,9 @@ def saveFFT(path, FFTList, startIndexList, endIndexList):
 # path: The path to the directory containing the signal data
 
 # Output
-# TODO: Add output
+# allFFT: All the FFT data aggregated together
+# allStartIndex: The starting index for the insect region for each FFT datum
+# allEndIndex: The ending index for the insect regsion for each FFT datum
 
 def processInBatch_1_1(path, slidingWindow, stepSize, minWingBeat, maxWingBeat):
     
@@ -350,7 +359,9 @@ def processInBatch_1_1(path, slidingWindow, stepSize, minWingBeat, maxWingBeat):
             FFTList.append(fftWindow)
             StartIndexList.append(startIndex)
             EndIndexList.append(endIndex)
-
+        
+        except RuntimeError as e:
+            raise e
         except Exception as e:
             print(e)
             print("Cannot process file: " + file)
@@ -390,7 +401,7 @@ def processInBatch_1_1(path, slidingWindow, stepSize, minWingBeat, maxWingBeat):
 # decision: Insect classifier decision (UNUSED CURRENTLY)
 # startIndex: The starting index of the insect region of the signal
 # endIndex: The ending index of the insect region of the signal
-# fftWindow: TODO
+# fftWindow: TODO 
 # fftWindowF: TODO
 
 def test_1_1(filePath, slidingWindowLength, stepSize, targetedFrequencyStart,
@@ -427,6 +438,9 @@ def test_1_1(filePath, slidingWindowLength, stepSize, targetedFrequencyStart,
         
         targeted_frequency = np.where((w_f > targetedFrequencyStart) &
                                       (w_f < targetedFrequencyEnd))
+        if targeted_frequency[0].size == 0:
+            raise RuntimeError("No valid insect data to process")
+
         peak = np.amax(w_P1[targeted_frequency]) 
 
         if peak > maxPeak:
@@ -517,7 +531,7 @@ def computeWBF(path, allFFT, sampleRate):
 # path: The path to the directory of files to analyze 
 #
 # Output
-# TODO: WHAT?
+# returns an array of occurances when insect data occured for 24 hours 
 
 def computeCircadianData(path):
     files = getFileNames(path, ".wav")     
