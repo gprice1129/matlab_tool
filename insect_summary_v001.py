@@ -131,44 +131,6 @@ def main(directory, gui, state):
     numFilesRejected = len(allStartIndexBad)
     numBins = int(ceil(numFilesAccepted/10.0))
    
-    # TODO: Make a function for string output 
-    outputString = "You are investigating a folder named '" + \
-                   directory.split(DELIM)[-1] + "'.\n"
-    outputString += "There are " + str(len(files)) + " wav files." + \
-                    "They are sampled at " + str(sampleRate) + " Hz.\n" 
-    outputString += "The earliest time stamp is " + earlyTimeStamp + \
-                    ", the latest is " + lateTimeStamp + ".\n" 
-    outputString += "This indicates a time span of " + str(int(deltaHours)) + \
-                    " hours, " + str(int(deltaMinutes)) + " minutes and " + \
-                    str(int(deltaSeconds)) + " seconds.\n"
-    outputString += str(numFilesRejected) + " files have been rejected at " + \
-                    "noise.\n"
-    outputString += str(numFilesAccepted) + " files have been accepted as " + \
-                    "containing least one insect encounter.\n" 
-    outputString += "Considering only the " + str(numFilesAccepted) + \
-                    " good files, we observe the following statistics for the WBF.\n"
-    outputString += "Minimum WBF: " + str(minWBF) + ".\n"
-    outputString += "Maximum WBF: " + str(maxWBF) + ".\n"
-    outputString += "Average WBF: " + str(meanWBF) + ".\n"
-    outputString += "Standard Deviation: " + str(stdWBF) + ".\n"
-    outputString += "This program uses the following default parameters " + \
-                    "which can be changed in the first few lines of this " + \
-                    "program.\n"
-    outputString += "minWingBeat = " + str(state.minWingBeat) + " (any file with " + \
-                    "a fundamental frequency below this is considered noise).\n"
-    outputString += "maxWingBeat = " + str(state.maxWingBeat) + " (any file with " + \
-                    "a fundamental frequency above this is considered noise).\n"
-    outputString += "slidingWindow = " + str(state.slidingWindow) + " (the size " + \
-                    " of snippets to examine).\n"
-    outputString += "stepSize = " + str(state.stepSize) + " (the jump between " + \
-                    "snippets).\n"
-    outputString += "complexityThreshold = " + str(state.complexityThreshold) + \
-                    " (the higher this value the more aggressively the " + \
-                    "script is when labeling files has noise).\n"
-    outputString += "interval = " + str(state.interval) + " (used to smooth the " + \
-                    "data for the circadian rhythm plot. This value is " + \
-                    "measured in minutes).\n"
-
     circadianData = computeCircadianData(goodPath)
     gui.plotWingBeat(gui.histogram, allWBF, meanWBF, stdWBF)
     gui.plotCircadian(gui.circadian, circadianData)
@@ -407,7 +369,7 @@ def processInBatch_1_1(path, slidingWindow, stepSize, minWingBeat, maxWingBeat):
 def test_1_1(filePath, slidingWindowLength, stepSize, targetedFrequencyStart,
              targetedFrequencyEnd):
 
-    data, sampleRate = read(filePath)
+    sampleRate, data = read(filePath)
     data = data.astype(np.float32) / np.iinfo(data.dtype).max
     decision = 0
     startIndex = 0
