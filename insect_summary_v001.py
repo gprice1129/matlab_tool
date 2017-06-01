@@ -4,9 +4,9 @@ from analyzergui import *
 import analyzerglobals as ag
 from math import ceil
 import shutil
-import soundfile as sf
 import scipy.io
 import scipy.signal
+from scipy.io.wavfile import read
 import numpy as np
 import numpy.fft
 from tkFileDialog import askdirectory, askopenfilename
@@ -69,7 +69,7 @@ def main(directory, gui, state):
             allFFT, allStartIndex, allEndIndex = fftData
                 
     # Seperate data into insect occurances and noise
-    sampleRate = sf.read(directory + DELIM + files[0])[1]
+    sampleRate = read(directory + DELIM + files[0])[0]
     score = computeComplexityScore(allFFT)
     indexOfGood = []
     indexOfBad = []
@@ -407,7 +407,8 @@ def processInBatch_1_1(path, slidingWindow, stepSize, minWingBeat, maxWingBeat):
 def test_1_1(filePath, slidingWindowLength, stepSize, targetedFrequencyStart,
              targetedFrequencyEnd):
 
-    data, sampleRate = sf.read(filePath)
+    data, sampleRate = read(filePath)
+    data = data.astype(np.float32) / np.iinfo(data.dtype).max
     decision = 0
     startIndex = 0
     endIndex = len(data) - 1 
