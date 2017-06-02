@@ -132,7 +132,7 @@ def main(directory, gui, state):
     numBins = int(ceil(numFilesAccepted/10.0))
    
     circadianData = computeCircadianData(goodPath)
-    gui.plotWingBeat(gui.histogram, allWBF, meanWBF, stdWBF)
+    gui.plotWingBeat(gui.histogram, allWBF, minWBF, maxWBF, meanWBF, stdWBF)
     gui.plotCircadian(gui.circadian, circadianData)
     gui.drawFigure(gui.histogram)
     gui.drawFigure(gui.circadian)
@@ -499,17 +499,21 @@ def computeWBF(path, allFFT, sampleRate):
 def computeCircadianData(path):
     files = getFileNames(path, ".wav")     
     dates = list(map(lambda f: fileToDate(f), files))
-    dates.sort()
-    currentDate = dates[0].date
     occurances = np.zeros(ag.MIN_IN_DAY)
-    numDays = 1
+    earlyDate = dates[0]
+    lateDate = dates[len(dates) - 1]
     for date in dates:
-        if date.date < currentDate:
-            numDays += 1    
+        if (date < earlyDate):
+            earlyDate = date
+        if (date > lateDate):
+            lateDate = date
         time = date.time()
         minute = time.hour * 60 + time.minute 
         occurances[minute] += 1
-    return occurances / float(numDays) 
+    deltaDate = lateDate - earlyDate
+    deltaHours, _ = divmod(deltaDate.total_seconds(), 3600)
+    numDays = (deltaHours / 24) + 1
+    return occurances / numDays 
     
     
 ###############################################################################

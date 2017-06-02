@@ -120,7 +120,7 @@ class AnalyzerWindow(BasicWindow):
             self.parameterWindow.window.lift()
         else: self.parameterWindow = ParameterWindow(self) 
 
-    def plotWingBeat(self, figure, data, mean, std):
+    def plotWingBeat(self, figure, data, minimum, maximum, mean, std):
         bins = [x for x in range(self.state.minWingBeat, 
                                  self.state.maxWingBeat + 200 + 1, 200)]
         data.sort()
@@ -131,6 +131,8 @@ class AnalyzerWindow(BasicWindow):
         axes.set_title("Histogram of Wingbeat Frequency")
         axes.set_xlabel("Wing Beat Frequency")
         axes.set_ylabel("Total Occurances") 
+        axes.text(0.65, 0.78, self.generateString(minimum, maximum, mean, std), 
+                transform=axes.transAxes, bbox=dict(facecolor='white', alpha=1.0)) 
 
         axes = figure.add_subplot(1,2,2)
         axes.plot(data, gaussian, '-o', color='#540EAD')
@@ -164,6 +166,10 @@ class AnalyzerWindow(BasicWindow):
 
     def drawFigure(self, figure):
         figure.canvas.draw()
+
+    def generateString(self, minimum, maximum, mean, std):
+        s = "Min: {0:.0f}\nMax: {1:.0f}\nMean: {2:.2f}\nStd: {3:.2f}"
+        return s.format(minimum, maximum, mean, std)
 
 class AnalyzerState:
     def __init__(self, minwb=ag.minWingBeat, maxwb=ag.maxWingBeat,
