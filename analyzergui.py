@@ -131,7 +131,7 @@ class AnalyzerWindow(BasicWindow):
         axes.set_title("Histogram of Wingbeat Frequency")
         axes.set_xlabel("Wing Beat Frequency")
         axes.set_ylabel("Total Occurances") 
-        axes.text(0.65, 0.78, self.generateString(minimum, maximum, mean, std), 
+        axes.text(0.66, 0.786, self.generateString(minimum, maximum, mean, std), 
                 transform=axes.transAxes, bbox=dict(facecolor='white', alpha=1.0)) 
 
         axes = figure.add_subplot(1,2,2)
