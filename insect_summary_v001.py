@@ -1,17 +1,19 @@
 import os
 import re
-from analyzergui import *
-import analyzerglobals as ag
-from math import ceil
+#from analyzergui import *
+#import analyzerglobals as ag
+from math import ceil, log
 import shutil
 import scipy.io
 import scipy.signal
 from scipy.io.wavfile import read
 import numpy as np
-import numpy.fft
+import numpy.fft as fft
 from tkFileDialog import askdirectory, askopenfilename
 import calendar
 import datetime as dt
+import Constants
+from Reader import Reader
 
 #TODO: Bug: Doesn't correctly choose to generate new files if parameters change
 #      Bug: Doesn't correctly handle the case where user chooses a directory
@@ -19,55 +21,46 @@ import datetime as dt
 #      Feature: Center the parameter window when it is opened
 #      Feature: Add dusk and dawn parameters and mark them on the plot
 
-def main(directory, gui, state):
-    getOSDelim()
-
-    files = getFileNames(directory, ".wav")
+def main(path, gui, state):
+    print smooth(np.array([10,15,22,89,11,2,1,99,1000,3,21]))
+    return
+    csv_reader = Reader(path)
     # If no files are found then report an error and abort
-    if files == []:
-        gui.showError("File Error", "No .wav files found on path: " + directory)
+    if not csv_reader.file_names:
+        gui.showError("File Error", "No .csv files found on path: " + path)
         return
+
+    all_samples = csv_reader.readAll()
 
     # Calculate earliest and latest date
     lowerDate = dt.datetime(dt.MINYEAR, 1, 1, 0, 0, 0)
     upperDate = dt.datetime(dt.MAXYEAR, 12, 31, 23, 59, 59)
-    earlyDate, lateDate = getDateRange(directory, lowerDate, upperDate)
+    earlyDate, lateDate = getDateRange(
+        list(map(lambda x: x.metadata.time_info, all_samples.values())), 
+        Constants.MIN_DATE, 
+        Constants.MAX_DATE)
+
     # Generate timestamps
-    earlyTimeStamp = earlyDate.strftime(ag.STAMP_FORMAT)
-    lateTimeStamp = lateDate.strftime(ag.STAMP_FORMAT)
+    earlyTimeStamp = earlyDate.strftime(Constants.STAMP_FORMAT)
+    lateTimeStamp = lateDate.strftime(Constants.STAMP_FORMAT)
      
     # Get difference in dates
     deltaDate = lateDate - earlyDate
     deltaHours, deltaSeconds = divmod(deltaDate.total_seconds(), 3600)
     deltaMinutes, deltaSeconds = divmod(deltaSeconds, 60)
 
-    # Try to load existing FFT data and check that there is no new data
-    recalculate = False
-    try:
-        allFFTData = scipy.io.loadmat(directory + DELIM + ag.FFT_ID + ".mat")
-        allFFT = allFFTData[ag.FFT_ID]
-        if len(allFFT) == len(files) and not gui.state.hasChanged():
-            print("Checking FFT files... good")
-            print("Attempting load on all_start_index.mat and all_end_index.mat")
-            allStartIndexData = scipy.io.loadmat(directory + DELIM + 
-                                                 ag.START_ID + ".mat")
-            allEndIndexData = scipy.io.loadmat(directory + DELIM +
-                                               ag.END_ID + ".mat")
-            allStartIndex = allStartIndexData[ag.START_ID][0]
-            allEndIndex = allEndIndexData[ag.END_ID][0] 
-        else: recalculate = True
-    except IOError:
-       recalculate = True 
-    finally:
-        if recalculate:
-            # Otherwise generate FFT file
-            fftData = processInBatch_1_1(directory,
-                                         state.slidingWindow,
-                                         state.stepSize,
-                                         state.minWingBeat,
-                                         state.maxWingBeat)
-            allFFT, allStartIndex, allEndIndex = fftData
-                
+    # Normalize sample data and convert to power spectrum
+    for file_name in csv_reader.file_names:
+        scale(all_samples[file_name])
+        timeToPowerSpectrum(all_samples[file_name], file_name)
+    return   
+
+    for file_name in csv_reader.file_names:
+        print file_name
+        scale(all_samples[file_name])
+        print(all_samples[file_name].data[:5])
+    return 
+
     # Seperate data into insect occurances and noise
     sampleRate = read(directory + DELIM + files[0])[0]
     score = computeComplexityScore(allFFT)
@@ -142,22 +135,6 @@ def main(directory, gui, state):
 # Supporting function definitions
 
 ###############################################################################
-# Sets the global delimiter based on the OS being used
-#
-# Parameters
-# None
-#
-# Output
-# None
-
-def getOSDelim():
-    global DELIM
-    if os.name == 'nt': DELIM = "\\"
-    else: DELIM = "/"
-    
-###############################################################################
-
-###############################################################################
 # Gets the earlist and latest date of files at a given path assuming the
 # following format for the filenames: 
 #               [year][month][day]-[hour]_[minute]_[second]
@@ -171,67 +148,11 @@ def getOSDelim():
 # Output
 # Returns the earliest and latest date
 
-def getDateRange(path, lowerDate, upperDate):
-    files = getFileNames(path, '.wav')
-    dates = list(map(lambda x: fileToDate(x), files))
+def getDateRange(dates, lowerDate, upperDate):
     dates = list(filter(lambda x: x > lowerDate and x < upperDate, dates))
     #TODO: Filter the files here based on the dates
     dates.sort()
     return (dates[0], dates[len(dates) - 1])
-
-###############################################################################
-
-###############################################################################
-# Saves a list of lists as numpy arrays and returns them.
-#
-# Parameters
-# dataLists: A list of data that should be converted to numpy arrays
-#
-# Output
-# arrayLists: A list of the data in numpy array form
-
-def convertToArray(dataLists):
-    arrayLists = []
-    for dataList in dataLists:
-        arrayLists.append(np.array(dataList))
-    return arrayLists
-    
-###############################################################################
-
-###############################################################################
-# Converts a filename in the format:
-#               [year][month][day]-[hour]_[minute]_[second]
-# to a datetime object.
-#
-# Parameters
-# filename: The filename to convert to a datetime object
-
-def fileToDate(filename):
-    year, month, day, hr, minute, sec = re.findall('\d+|[A-Z][a-z]+', filename);
-    month = ag.MONTHS[month] #TODO: This is really unsafe, should do error checking
-    year, day, hr, minute, sec = list(map(lambda x: int(x),
-                                          [year, day, hr, minute, sec])) 
-    return dt.datetime(year, month, day, hr, minute, sec)
-
-###############################################################################
-
-###############################################################################
-# Gets all filenames with a given extension and returns them in a list
-
-# Parameters
-# path: The path to the directory to search for files
-# extension: The extension to look for
-
-# Output
-# A list containing the filenames in the given path with the given extension
-
-def getFileNames(path, extension):
-    files = []
-    for file in os.listdir(path):
-        if file.endswith(extension):
-            files.append(file)
-    files.sort() 
-    return files
 
 ###############################################################################
 
@@ -257,198 +178,93 @@ def createDirectory(path, directoryName):
 ###############################################################################
 
 ###############################################################################
-# Save the FFT and associated indicies to disk
+# Return the scaled the signal data for a given sample
 
 # Parameters
-# path: The path to the directory to save the files to
-# allFFT: The windows of FFT data where there is potential insect data
-# allStartIndex: The starting index of where the potential insect data is
-# allEndIndex: The ending index of where the potential insect data is
+# sample: A sample to be scaled
 
 # Output
-# Returns the values back as numpy arrays 
+# None
 
-def saveFFT(path, FFTList, startIndexList, endIndexList):
-    allFFT = np.array(FFTList)
-    allStartIndex = np.array(startIndexList)
-    allEndIndex = np.array(endIndexList)
-    scipy.io.savemat(path + DELIM + ag.FFT_ID, {ag.FFT_ID: allFFT})
-    scipy.io.savemat(path + DELIM + ag.START_ID, {ag.START_ID: allStartIndex})
-    scipy.io.savemat(path + DELIM + ag.END_ID, {ag.END_ID: allEndIndex}) 
-    return allFFT, allStartIndex, allEndIndex
-
+def scale(sample):
+    sample.data -= np.mean(sample.data, dtype=np.float32)
+    sample.data /= np.amax(np.absolute(sample.data))
+          
 ###############################################################################
 
 ###############################################################################
-# Process the signal for each file in 'directory' and preserve only the window
-# corresponding to the insect. Set all other values to 0. Write the result in 
-# the folder_processed directory.
-
-# Get the FFT for each insect window within the frequence range from 1-2000.
-# and writes it to a single file in the FFT directory.
-# Each row of the resulting file will contain the FFT time series for one
-# insect window. The first column of each row will be the class label.
-
-# Gets the peak wingbeat frequency in the range 200-900 of the insect window
-# and writes the results to a single file in the WBF folder. The resulting file
-# has two columns. The first column is the class label, the second column is
-# the peak wingbeat frequency.
+# Returns sample data converted from a time-domain signal into a power
+# spectrum using fast Fourier transform (FFT)
 
 # Parameters
-# path: The path to the directory containing the signal data
+# sample: A sample in the time-domain
 
 # Output
-# allFFT: All the FFT data aggregated together
-# allStartIndex: The starting index for the insect region for each FFT datum
-# allEndIndex: The ending index for the insect regsion for each FFT datum
+# None
 
-def processInBatch_1_1(path, slidingWindow, stepSize, minWingBeat, maxWingBeat):
-    
-    FFTList = []
-    StartIndexList = [] 
-    EndIndexList = []
-
-    fileNames = getFileNames(path, ".wav") 
-
-    for file in fileNames:
-        try:
-            filePath = path + DELIM + file
-            results = test_1_1(filePath, slidingWindow, stepSize,
-                    minWingBeat, maxWingBeat)
-
-            decision, startIndex, endIndex, fftWindow, fftWindowF, sampleRate = results
-            
-            FFTList.append(fftWindow)
-            StartIndexList.append(startIndex)
-            EndIndexList.append(endIndex)
-        
-        except RuntimeError as e:
-            raise e
-        except Exception as e:
-            print(e)
-            print("Cannot process file: " + file)
-            print("Moving unprocessed file to 'cannot_process' directory")
-        
-            cannotProcessDir = path + DELIM + "cannot_process" + DELIM
-            createDirectory(path, "cannot_process")
-            
-#            os.rename(path + DELIM + file, cannotProcessDir + file) 
-
-
-    allFFT, allStartIndex, allEndIndex = convertToArray(
-        list([FFTList, StartIndexList, EndIndexList]))
-    saveFFT(path, allFFT, allStartIndex, allEndIndex) 
-    return allFFT, allStartIndex, allEndIndex
+def timeToPowerSpectrum(sample, file_name):
+    print file_name
+    sample_size = len(sample.data)
+    NFFT = 2**nextPower2(sample_size)*4 # Can be optimized out
+    power_spectrum = fft.fft(sample.data, NFFT) 
+    power_spectrum = np.absolute(power_spectrum[0:NFFT/2+1])**2
+    power_spectrum[1:-1] = power_spectrum[1:-1]*2
+    power_spectrum = power_spectrum/NFFT
+    power_spectrum = smooth(power_spectrum)
+    print power_spectrum[:5]
+    sample.data = power_spectrum
 
 ###############################################################################
 
 ###############################################################################
-# Test if a signal contains an insect region.
-
-# If the signal has any of the following properties it is considered an in
-# insect region:
-#    1) The peak amplitude in the frequency range 400-1800 is greater than 0.2
-#    2) The peak amplitude in the frequency range 400-1800 is greater than or
-#       equal to 0.01, the peak amplitude between the frequency range 50-200
-#       is less than 0.03, and the peak amplitude in the frequency range
-#       1200-2000 is less than 0.03
+# Returns the next power of 2 that is greater than or equal to the given
+# value
 
 # Parameters
-# filePath: The path to a file containing signal data.
-# decision: True if the signal contains the signal region, False otherwise.
-# startIndex: The most likely starting index of the insect region of the.
-#             signal. 
+# n: A number
 
 # Output
-# decision: Insect classifier decision (UNUSED CURRENTLY)
-# startIndex: The starting index of the insect region of the signal
-# endIndex: The ending index of the insect region of the signal
-# fftWindow: TODO 
-# fftWindowF: TODO
+# power: The power of 2 such that 2^power >= n
 
-def test_1_1(filePath, slidingWindowLength, stepSize, targetedFrequencyStart,
-             targetedFrequencyEnd):
-
-    sampleRate, data = read(filePath)
-    data = data.astype(np.float32) / np.iinfo(data.dtype).max
-    decision = 0
-    startIndex = 0
-    endIndex = len(data) - 1 
-    fftWindow = 0
-    fftWindowF = 0
-    maxPeak = 0
-
-
-    # Apply high pass filter
-    order = 6
-    frequencyCutoff = 200
-    b, a = scipy.signal.butter(order,
-            frequencyCutoff / (sampleRate / 2.0), 'high') 
-    data = scipy.signal.lfilter(b, a, data)
-
-    # Pad signal in case sliding window goes out of bounds
-    signal = np.pad(data, ((0, slidingWindowLength)),
-            "constant", constant_values = 0) 
-
-    # TODO: More decriptive variables names
-    for i in range(0, (len(signal) - slidingWindowLength), stepSize):
-        window = signal[i:i + slidingWindowLength] 
-        NFFT = 1024
-        w_P2 = numpy.fft.rfft(window, NFFT) 
-        w_P1 = w_P2*np.conjugate(w_P2)/float(NFFT*len(window))
-        w_P1 = w_P1[0: (NFFT / 2)]
-        w_f = (float(sampleRate) / NFFT) * np.arange(NFFT / 2)
-        
-        targeted_frequency = np.where((w_f > targetedFrequencyStart) &
-                                      (w_f < targetedFrequencyEnd))
-        if targeted_frequency[0].size == 0:
-            raise RuntimeError("No valid insect data to process")
-
-        peak = np.amax(w_P1[targeted_frequency]) 
-
-        if peak > maxPeak:
-            maxPeak = peak
-            startIndex = i
-            fftWindow = w_P1
-            fftWindowF = w_f
-    
-    slidingWindowBoundary = startIndex + slidingWindowLength
-    if len(data) > slidingWindowBoundary:
-        endIndex = slidingWindowBoundary - 1
-
-    # Get the frequency range from 20-2000 inclusive
-    targetedRange = np.where((fftWindowF >= 20) &
-                             (fftWindowF <= 2000))
-
-    fftWindow = np.take(fftWindow, targetedRange)
-    fftWindowF = np.take(fftWindowF, targetedRange)
-
-    return (decision, startIndex, endIndex, fftWindow[0], fftWindowF[0], sampleRate)
+def nextPower2(n):
+    return int(ceil(log(n, 2)))
 
 ###############################################################################
 
 ###############################################################################
-# TODO: Give description of this function. What is meant by "complexity score"?
-def computeComplexityScore(allFFT):
-    score = []
-    for fft in allFFT:
-        complexity = 0
-        sum = 0
-        sqsum = 0
-        lnsum = 0
-        sc = 0
-        for i in range(len(fft)):
-            f = fft[i]
-            sum += f
-            sqsum += f * f
-            lnsum += np.log(f)
-            sc += (i + 1) * f
-            if i > 0:
-                fDif = f - fft[i - 1]
-                complexity += (fDif * fDif) 
-        complexity = np.sqrt(complexity)
-        score.append(complexity) 
-    return score
+# Smooths the given data using a moving average filter with a span of 5
+
+# Parameters
+# data: A numpy array of data points 
+# span: The span of numbers to average per data point
+
+# Output
+# smoothed_data: A numpy array of data points after applying the filter 
+
+def smooth(data, span):
+    if (data.size < 3) return data
+    if (span % 2 != 0): span -= 1
+    smoothed_data = np.zeros(data.size, dtype=np.float32)
+    # Handle boundary data points
+    cur_l = 0
+    cur_r = -1
+    left_bound = cur_l + 1
+    right_bound = cur_r - 1
+    smoothed_data[cur_l] = data[cur_l]
+    smoothed_data[cur_r] = data[cur_r]
+    stop_i = (span / 2 ) - 1
+    while cur_l < stop_i:
+        smoothed_data[cur_l+1] = (
+            smoothed_data[cur_l] + data[left_bound] + data[left_bound+1])
+        smoothed_data[cur_r-1] = (
+            smoothed_data[cur_r] + data[right_bound] + data[right_bound-1])
+        cur_l += 1
+        cur_r -= 1
+        left_bound += 2
+        right_bound -= 2
+    # Handle valid data points
+    smoothed_data[2:-2] = np.convolve(data, np.ones((5,))/5, mode='valid')
+    return smoothed_data 
 
 ###############################################################################
 
@@ -468,19 +284,12 @@ def computeWBF(path, allFFT, sampleRate):
     NFFT = 1024
     allWBF = []
 
-    if allFFT is None:
-        filePath = askopenfilename(filetypes=[('all files', '.*'), 
-                                              ('MAT files', '.mat')])
-        allFFTFile = scipy.io.loadmat(filePath)
-        allFFT = allFFTFile[ag.FFT_ID]
-
     for fft in allFFT:
         loc = np.argmax(fft)
         freqVals = sampleRate * np.arange(NFFT / 2) / NFFT;    
         allWBF.append(np.round(freqVals[loc]) + 1)
 
     allWBF = np.array(allWBF)
-    scipy.io.savemat(path + DELIM + ag.WBF_ID, {ag.WBF_ID: allFFT})
     return allWBF
 
 ###############################################################################
@@ -499,7 +308,7 @@ def computeWBF(path, allFFT, sampleRate):
 def computeCircadianData(path):
     files = getFileNames(path, ".wav")     
     dates = list(map(lambda f: fileToDate(f), files))
-    occurances = np.zeros(ag.MIN_IN_DAY)
+    occurances = np.zeros(Constants.MIN_IN_DAY)
     earlyDate = dates[0]
     lateDate = dates[len(dates) - 1]
     for date in dates:
