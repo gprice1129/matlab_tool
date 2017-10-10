@@ -35,13 +35,13 @@ class Reader:
                 self.file_names.append(f) 
         return self.file_names
 
-    def parse_metadata(self, metadata):
+    def parseMetadata(self, file_name, metadata):
         metadata = metadata.split('-')
         date = metadata[0]
         time = metadata[1]
         temperature = metadata[2]
         pressure = metadata[3]
-        return Metadata(date, time, temperature, pressure)
+        return Metadata(file_name, date, time, temperature, pressure)
 
     def read(self, file_name):
         data = np.empty(NUM_POINTS, dtype=np.float32) 
@@ -50,7 +50,7 @@ class Reader:
             for i in range(NUM_POINTS):
                 line = f.readline()
                 data[i] = (int(line)) 
-            metadata = self.parse_metadata(f.readline()) 
+            metadata = self.parseMetadata(file_name, f.readline()) 
         return Sample(data, metadata)
 
     def readNext(self):

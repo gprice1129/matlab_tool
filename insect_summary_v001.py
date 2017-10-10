@@ -1,8 +1,8 @@
 import os
 import re
-#from analyzergui import *
-#import analyzerglobals as ag
-from math import ceil, log
+from analyzergui import *
+import analyzerglobals as ag
+from math import floor, ceil, log
 import shutil
 import scipy.io
 import scipy.signal
@@ -15,15 +15,15 @@ import datetime as dt
 import Constants
 from Reader import Reader
 
-#TODO: Bug: Doesn't correctly choose to generate new files if parameters change
-#      Bug: Doesn't correctly handle the case where user chooses a directory
-#           with no data files
-#      Feature: Center the parameter window when it is opened
-#      Feature: Add dusk and dawn parameters and mark them on the plot
+# TODO
+
+# Calculate total circadian rhythm over entire set of data
+# Calculate average total of circadian rhythm over entire set of data
+# Calculate wingbeat frequency distribution
+# The above items are the three deliverables to the GUI
+# Implement the calculateXYZ function
 
 def main(path, gui, state):
-    print smooth(np.array([10,15,22,89,11,2,1,99,1000,3,21]))
-    return
     csv_reader = Reader(path)
     # If no files are found then report an error and abort
     if not csv_reader.file_names:
@@ -49,18 +49,21 @@ def main(path, gui, state):
     deltaHours, deltaSeconds = divmod(deltaDate.total_seconds(), 3600)
     deltaMinutes, deltaSeconds = divmod(deltaSeconds, 60)
 
-    # Normalize sample data and convert to power spectrum
-    for file_name in csv_reader.file_names:
-        scale(all_samples[file_name])
-        timeToPowerSpectrum(all_samples[file_name], file_name)
-    return   
+    # Scale sample data and convert to power spectrum
+    for sample in list(all_samples.values()):
+        if (sample.metadata.time_info < lowerDate or 
+            sample.metadata.time_info > upperDate):
+                continue
+        scale(sample)
+        timeToPowerSpectrum(sample)
+        print sample.metadata.source
+        print getMainFreq(sample, Constants.FS)
+        print
+    return
+                
+        
 
-    for file_name in csv_reader.file_names:
-        print file_name
-        scale(all_samples[file_name])
-        print(all_samples[file_name].data[:5])
-    return 
-
+     
     # Seperate data into insect occurances and noise
     sampleRate = read(directory + DELIM + files[0])[0]
     score = computeComplexityScore(allFFT)
@@ -157,27 +160,6 @@ def getDateRange(dates, lowerDate, upperDate):
 ###############################################################################
 
 ###############################################################################
-# Creates a directory with a given name in a given path
-
-# Parameters
-# path: The path to where the directory should be created
-# directoryName: The name of the directory to be created
-
-# Output
-# None
-
-def createDirectory(path, directoryName):
-    directoryPath = path + DELIM + directoryName
-    try:
-        os.makedirs(directoryPath)
-    except OSError:
-        if not os.path.isdir(directoryPath):
-            raise
-        else: pass
-
-###############################################################################
-
-###############################################################################
 # Return the scaled the signal data for a given sample
 
 # Parameters
@@ -202,16 +184,14 @@ def scale(sample):
 # Output
 # None
 
-def timeToPowerSpectrum(sample, file_name):
-    print file_name
+def timeToPowerSpectrum(sample):
     sample_size = len(sample.data)
     NFFT = 2**nextPower2(sample_size)*4 # Can be optimized out
     power_spectrum = fft.fft(sample.data, NFFT) 
     power_spectrum = np.absolute(power_spectrum[0:NFFT/2+1])**2
     power_spectrum[1:-1] = power_spectrum[1:-1]*2
     power_spectrum = power_spectrum/NFFT
-    power_spectrum = smooth(power_spectrum)
-    print power_spectrum[:5]
+    power_spectrum = smooth(power_spectrum, 9)
     sample.data = power_spectrum
 
 ###############################################################################
@@ -242,8 +222,8 @@ def nextPower2(n):
 # smoothed_data: A numpy array of data points after applying the filter 
 
 def smooth(data, span):
-    if (data.size < 3) return data
-    if (span % 2 != 0): span -= 1
+    if (data.size < 3): return data
+    if (span % 2 == 0): span -= 1
     smoothed_data = np.zeros(data.size, dtype=np.float32)
     # Handle boundary data points
     cur_l = 0
@@ -252,7 +232,7 @@ def smooth(data, span):
     right_bound = cur_r - 1
     smoothed_data[cur_l] = data[cur_l]
     smoothed_data[cur_r] = data[cur_r]
-    stop_i = (span / 2 ) - 1
+    stop_i = span / 2
     while cur_l < stop_i:
         smoothed_data[cur_l+1] = (
             smoothed_data[cur_l] + data[left_bound] + data[left_bound+1])
@@ -262,36 +242,69 @@ def smooth(data, span):
         cur_r -= 1
         left_bound += 2
         right_bound -= 2
+    divisor = 1.0
+    for i in range(stop_i):
+        smoothed_data[i] /= divisor
+        smoothed_data[-i - 1] /= divisor
+        divisor += 2.0 
     # Handle valid data points
-    smoothed_data[2:-2] = np.convolve(data, np.ones((5,))/5, mode='valid')
+    smoothed_data[stop_i:-stop_i] = np.convolve(
+        data, np.ones((span,))/span, mode='valid')
     return smoothed_data 
 
 ###############################################################################
 
 ###############################################################################
-# Computes the wing beat frequencies for the given frequency data 
+# Gets the main wingbeat frequency for a sample 
 
 # Parameters
-# path: The path to the directory of the frequency data. This is only used
-#       if no frequency data is passed in.
-# allFFT: The frequency data. If this is None then an attempt will be made to
-#         load the frequency data from the given path
-# sampleRate: The rate the frequency data was sampled at.
+# :sample: (Sample) An instance of sample data
+# :fs: (int) Sample rate?
 
 # Output
-# allWBF: The wing beat frequencies for all the frequency data provided
-def computeWBF(path, allFFT, sampleRate):
-    NFFT = 1024
-    allWBF = []
+# :main_freq: (int) The main wing beat frequency for the sample 
+def getMainFreq(sample, fs):
+    data = sample.data
+    interval = fs / 2.0 / (len(data) - 1)
+    starting = 100
+    start_idx = int(starting / interval)
+    bandwidth_idx = int(100 / interval)
+    bw_idx = int(75 / interval)
+    max_idx, maxpow = getMax(data[start_idx - 1:])
+    max_idx += start_idx - 1
+    max_freq = (max_idx - 1) * interval
+    main_freq = max_freq
+    if main_freq > 200:
+        data[int(max_idx) - bandwidth_idx - 1:] = 0  
+        half_mid = int(max_idx / 2)
+        front = half_mid - bw_idx
+        back = half_mid + bw_idx
+        max_idx2, maxpow2 = getMax(data[start_idx - 1:]) 
+        max_idx2 += start_idx - 1
+        if (max_idx2 > front and max_idx2 < back and
+            maxpow2 > max(data[front - 1], data[back - 1]) * 1.5):
+            max_idx = int(max_idx / 2) 
+            half_freq_pow = max(data[max_idx - 1], data[max_idx])
+            if (half_freq_pow >= maxpow / 10):
+                main_freq = max_freq / 2
+    return main_freq
+###############################################################################
 
-    for fft in allFFT:
-        loc = np.argmax(fft)
-        freqVals = sampleRate * np.arange(NFFT / 2) / NFFT;    
-        allWBF.append(np.round(freqVals[loc]) + 1)
+###############################################################################
+# Utility function for repeated use in getMainFreq function
+#
+# Parameters
+# :data: (np.array) Sample data
+#
+# Output
+# :max_idx: The location of the max index
+# :maxpow: The maximum value at max_idx
 
-    allWBF = np.array(allWBF)
-    return allWBF
-
+def getMax(data):
+    max_idx = np.argmax(data)
+    maxpow = data[int(max_idx)]
+    return max_idx + 1, maxpow
+   
 ###############################################################################
 
 ###############################################################################

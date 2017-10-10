@@ -8,3 +8,6 @@ STAMP_FORMAT='%m/%d/%y at %H:%M:%S'
 MIN_DATE=dt.datetime(dt.MINYEAR,1,1,0,0,0)
 MAX_DATE=dt.datetime(dt.MAXYEAR,12,31,23,59,59)
 MIN_IN_DAY = 1440
+MIN_FREQ = 100
+MAX_FREQ = 2500
+FS = 8000 # What is this?
