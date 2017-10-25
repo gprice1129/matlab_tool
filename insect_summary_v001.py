@@ -55,10 +55,13 @@ def main(path, gui, state):
             sample.metadata.time_info > upperDate):
                 continue
         scale(sample)
-        timeToPowerSpectrum(sample)
         print sample.metadata.source
-        print getMainFreq(sample, Constants.FS)
-        print
+        timeToPowerSpectrum(sample)
+        main_freq = getMainFreq(sample, Constants.FS)
+        if main_freq > Constants.MIN_FREQ and main_freq < Constants.MAX_FREQ:
+            if sample.metadata.source == "8.csv":
+                print("Main Freq: " + str(main_freq))
+                complexityScore(sample.data, Constants.FS, main_freq) 
     return
                 
         
@@ -306,6 +309,36 @@ def getMax(data):
     return max_idx + 1, maxpow
    
 ###############################################################################
+
+###############################################################################
+# Get the complexity score of the data
+#
+# Parameters
+# :spect: The frequency data for one sample
+# :fs: Sample rate?
+# :main_freq: The main frequency of the sample data
+#
+# Output
+# :score: The complexity score of the sample
+
+def complexityScore(spect, fs, main_freq):
+    interval = fs / 2.0 / (len(spect) - 1)
+    bandwidth = 50
+    main_idx = int(main_freq / interval) + 1
+    idx_bandwidth = int(ceil(bandwidth / interval))
+    filter1 = np.zeros(len(spect), dtype=bool)
+    end_idx = int(2500 / interval)
+    for i in range(1, (end_idx / main_idx) + 1):
+        cur_min = max(1, main_idx * i - idx_bandwidth)
+        cur_max = min(end_idx, main_idx * i + idx_bandwidth)
+        filter1[cur_min - 1 : cur_max] = True 
+    start_idx = int(100 / interval) + 1
+    filter2 = np.ones(len(spect), dtype=bool)
+    filter2[:start_idx - 1] = False 
+    filter2[end_idx:len(spect)] = False
+    for i in range(0,len(spect),32):
+        print(spect[i:i+32])
+    return np.sum(spect[filter1]) / np.sum(spect[filter2]) 
 
 ###############################################################################
 # Computes the circadian rhythm data for files in a directory given by path.
